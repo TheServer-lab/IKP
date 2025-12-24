@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """
-IKP Visual IDE v0.3 -> v0.4-patched (fixed)
+IKP Visual IDE v0.4 (patched to use ikp_core)
 - Generates spec-compliant IKP (ikp: 0.4)
-- Creates structured actions for buttons (goto/set/progress)
-- Resolves images relative to project when selecting
-- Exports example pack
+- Uses ikp_core for YAML dump and validation
 """
 
 import tkinter as tk
 from tkinter import ttk, filedialog, simpledialog, messagebox
 from tkinter.scrolledtext import ScrolledText
 import yaml, os
+
+from ikp_core import dump_yaml, validate_ikp
 
 try:
     from PIL import Image, ImageTk
@@ -89,18 +89,13 @@ class SceneCanvas(tk.Canvas):
         for i, b in enumerate(self.scene_data.get("ui", [])):
             t = b["type"]
             col = BLOCK_COLORS.get(t, "#ddd")
-
-            # Draw Block
             tag = f"idx_{i}"
             rect = self.create_rectangle(10, y, 240, y+35, fill=col, outline="#333", width=2, tags=("block", tag))
             txt = self.create_text(20, y+17, anchor="w", text=f"{t.upper()}: {b.get('text', b.get('label', ''))[:15]}",
                                    font=("Arial", 9, "bold"), tags=("block", tag))
-
-            # Events
             self.tag_bind(tag, "<Button-1>", lambda e, idx=i: self.start_drag(e, idx))
             self.tag_bind(tag, "<Double-Button-1>", lambda e, idx=i: self.app.edit_block(idx))
-            self.tag_bind(tag, "<Button-3>", lambda e, idx=i: self.show_context_menu(e, idx)) # Right Click
-
+            self.tag_bind(tag, "<Button-3>", lambda e, idx=i: self.show_context_menu(e, idx))
             y += 45
 
     def show_context_menu(self, event, idx):
@@ -161,144 +156,97 @@ class IKPVisualIDE(tk.Tk):
         self.pane = ttk.PanedWindow(self, orient="horizontal")
         self.pane.pack(fill="both", expand=True)
 
-        # Palette
         pal_frame = ttk.Frame(self.pane); self.pane.add(pal_frame, weight=0)
         ttk.Label(pal_frame, text="PALETTE", font=("Arial", 10, "bold")).pack(pady=10)
         for t in PALETTE:
-            btn = ttk.Button(pal_frame, text=t.capitalize(), command=lambda tt=t: self.add_block(tt))
-            btn.pack(fill="x", padx=10, pady=2)
+            btn = ttk.Button(pal_frame, text=t.capitalize(), command=lambda tt=t: self.add_block(tt)); btn.pack(fill="x", padx=10, pady=2)
 
-        # Center (Canvas)
         center = ttk.Frame(self.pane); self.pane.add(center, weight=1)
-        self.scene_sel = ttk.Combobox(center, state="readonly")
-        self.scene_sel.pack(fill="x", padx=5, pady=5)
+        self.scene_sel = ttk.Combobox(center, state="readonly"); self.scene_sel.pack(fill="x", padx=5, pady=5)
         self.scene_sel.bind("<<ComboboxSelected>>", self.on_scene_change)
-        self.canvas_container = ttk.Frame(center)
-        self.canvas_container.pack(fill="both", expand=True)
+        self.canvas_container = ttk.Frame(center); self.canvas_container.pack(fill="both", expand=True)
 
-        # Right (Preview & YAML)
         right = ttk.Frame(self.pane); self.pane.add(right, weight=1)
-        self.tabs = ttk.Notebook(right)
-        self.tabs.pack(fill="both", expand=True)
+        self.tabs = ttk.Notebook(right); self.tabs.pack(fill="both", expand=True)
         self.preview_area = ttk.Frame(self.tabs); self.tabs.add(self.preview_area, text="LIVE PREVIEW")
         self.yaml_area = ScrolledText(self.tabs, width=40, font=("Courier New", 10)); self.tabs.add(self.yaml_area, text="YAML")
 
     def add_block(self, type_name):
         block = {"type": type_name}
-        # sensible defaults
-        if type_name == "label":
-            block["text"] = "Label text"
-        elif type_name == "input":
-            block.update({"label":"Label","var":"v1","default":""})
-        elif type_name == "textarea":
-            block.update({"label":"Label","var":"v1","rows":4,"default":""})
-        elif type_name == "button":
-            block.update({"text":"Button","action":{"type":"goto","target":"Main"}})
-        elif type_name == "checkbox":
-            block.update({"label":"Check","var":"v1","default":False})
-        elif type_name == "dropdown":
-            block.update({"label":"Choose","var":"v1","options":["A","B"],"default":"A"})
-        elif type_name == "slider":
-            block.update({"label":"Scale","var":"v1","from":0,"to":100,"default":0})
-        elif type_name == "progress":
-            block.update({"var":"p1","max":100,"value":0})
-        elif type_name == "image":
-            block.update({"src":"","width":200,"height":150})
+        if type_name == "label": block["text"] = "Label text"
+        elif type_name == "input": block.update({"label":"Label","var":"v1","default":""})
+        elif type_name == "textarea": block.update({"label":"Label","var":"v1","rows":4,"default":""})
+        elif type_name == "button": block.update({"text":"Button","action":{"type":"goto","target":"Main"}})
+        elif type_name == "checkbox": block.update({"label":"Check","var":"v1","default":False})
+        elif type_name == "dropdown": block.update({"label":"Choose","var":"v1","options":["A","B"],"default":"A"})
+        elif type_name == "slider": block.update({"label":"Scale","var":"v1","from":0,"to":100,"default":0})
+        elif type_name == "progress": block.update({"var":"p1","max":100,"value":0})
+        elif type_name == "image": block.update({"src":"","width":200,"height":150})
         self.model["scenes"][self.active_scene]["ui"].append(block)
         self.refresh_ui()
 
     def edit_block(self, idx):
         block = self.model["scenes"][self.active_scene]["ui"][idx]
-        edit_win = tk.Toplevel(self)
-        edit_win.title(f"Edit {block['type']}")
+        edit_win = tk.Toplevel(self); edit_win.title(f"Edit {block['type']}")
         fields = FIELDS.get(block["type"], ["text", "var"])
         entries = {}
-        # For button-type, support structured action editor fields
         for i, f in enumerate(fields):
             ttk.Label(edit_win, text=f).grid(row=i, column=0, padx=10, pady=5)
             e = ttk.Entry(edit_win)
-            # preset values
             if f == "options":
                 e.insert(0, ",".join(block.get(f, [])))
             elif f.startswith("action") and block.get("action"):
-                # map structured action to fields
-                if f == "action_type":
-                    e.insert(0, block.get("action", {}).get("type", ""))
-                elif f == "action_target":
-                    e.insert(0, block.get("action", {}).get("target", ""))
-                elif f == "action_var":
-                    e.insert(0, block.get("action", {}).get("var", ""))
-                elif f == "action_value":
-                    e.insert(0, str(block.get("action", {}).get("value", "")))
+                if f == "action_type": e.insert(0, block.get("action", {}).get("type", ""))
+                elif f == "action_target": e.insert(0, block.get("action", {}).get("target", ""))
+                elif f == "action_var": e.insert(0, block.get("action", {}).get("var", ""))
+                elif f == "action_value": e.insert(0, str(block.get("action", {}).get("value", "")))
             else:
                 e.insert(0, str(block.get(f, "")))
-            e.grid(row=i, column=1, padx=10, pady=5)
-            entries[f] = e
+            e.grid(row=i, column=1, padx=10, pady=5); entries[f] = e
 
         def save():
             for f, e in entries.items():
                 val = e.get()
-                if f == "options":
-                    block[f] = [s.strip() for s in val.split(",") if s.strip()]
-                elif f in ("rows","from","to","max","width","height"):
-                    block[f] = int(val) if val.isdigit() else val
-                elif f.startswith("action"):
-                    # skip here, will assemble action afterwards
-                    pass
+                if f == "options": block[f] = [s.strip() for s in val.split(",") if s.strip()]
+                elif f in ("rows","from","to","max","width","height"): block[f] = int(val) if val.isdigit() else val
+                elif f.startswith("action"): pass
                 else:
-                    # keep booleans and numbers naive
                     if val.lower() in ("true","false"):
-                        v = val.lower() == "true"
-                        block[f] = v
+                        block[f] = val.lower() == "true"
                     else:
                         block[f] = val
-            # assemble action if this block is a button
             if block["type"] == "button":
                 typ = entries.get("action_type").get()
                 if typ:
                     action = {"type": typ}
-                    if typ == "goto":
-                        action["target"] = entries.get("action_target").get()
-                    elif typ == "set":
-                        action["var"] = entries.get("action_var").get()
-                        action["value"] = entries.get("action_value").get()
+                    if typ == "goto": action["target"] = entries.get("action_target").get()
+                    elif typ == "set": action["var"] = entries.get("action_var").get(); action["value"] = entries.get("action_value").get()
                     elif typ == "progress":
                         action["target"] = entries.get("action_target").get()
-                        try:
-                            action["value"] = float(entries.get("action_value").get())
-                        except Exception:
-                            action["value"] = entries.get("action_value").get()
-                    else:
-                        # unknown - save raw fields if provided
-                        action["target"] = entries.get("action_target").get()
+                        try: action["value"] = float(entries.get("action_value").get())
+                        except Exception: action["value"] = entries.get("action_value").get()
+                    else: action["target"] = entries.get("action_target").get()
                     block["action"] = action
-            edit_win.destroy()
-            self.refresh_ui()
+            edit_win.destroy(); self.refresh_ui()
 
         ttk.Button(edit_win, text="Save Changes", command=save).grid(row=len(fields), columnspan=2, pady=10)
 
     def refresh_ui(self):
         for w in self.canvas_container.winfo_children(): w.destroy()
-        canvas = SceneCanvas(self.canvas_container, self, self.model["scenes"][self.active_scene])
-        canvas.pack(fill="both", expand=True)
-        canvas.bind("<B1-Motion>", canvas.do_drag)
-        canvas.bind("<ButtonRelease-1>", canvas.stop_drag)
+        canvas = SceneCanvas(self.canvas_container, self, self.model["scenes"][self.active_scene]); canvas.pack(fill="both", expand=True)
+        canvas.bind("<B1-Motion>", canvas.do_drag); canvas.bind("<ButtonRelease-1>", canvas.stop_drag)
 
         for w in self.preview_area.winfo_children(): w.destroy()
         IKPLivePreview(self.preview_area, self.model, self.active_scene).pack(fill="both", expand=True, padx=20, pady=20)
 
-        # YAML
         self.yaml_area.delete("1.0", "end")
         out = {"ikp":"0.4", "meta":{"title":self.project_title}, **self.model}
-        self.yaml_area.insert("1.0", yaml.dump(out, sort_keys=False))
+        self.yaml_area.insert("1.0", dump_yaml(out))
 
-        # Sync Dropdown
-        self.scene_sel["values"] = list(self.model["scenes"].keys())
-        self.scene_sel.set(self.active_scene)
+        self.scene_sel["values"] = list(self.model["scenes"].keys()); self.scene_sel.set(self.active_scene)
 
     def on_scene_change(self, e):
-        self.active_scene = self.scene_sel.get()
-        self.refresh_ui()
+        self.active_scene = self.scene_sel.get(); self.refresh_ui()
 
     def add_scene(self):
         name = simpledialog.askstring("New Scene", "Enter scene name:")
@@ -314,7 +262,7 @@ class IKPVisualIDE(tk.Tk):
         try:
             out = {"ikp":"0.4","meta":{"title":self.project_title}, **self.model}
             with open(path, "w", encoding="utf-8") as f:
-                f.write(yaml.dump(out, sort_keys=False))
+                f.write(dump_yaml(out))
             self.project_path = os.path.dirname(path)
             messagebox.showinfo("Saved", f"Saved {path}")
         except Exception as e:
@@ -322,17 +270,13 @@ class IKPVisualIDE(tk.Tk):
 
     def open_file(self):
         path = filedialog.askopenfilename(filetypes=[("IKP Files","*.ikp"), ("YAML","*.yaml;*.yml"), ("All Files","*.*")])
-        if not path:
-            return
+        if not path: return
         try:
             with open(path, "r", encoding="utf-8") as f:
                 data = yaml.safe_load(f)
             if not isinstance(data, dict) or "scenes" not in data:
-                messagebox.showerror("Open Error", "Not a valid IKP file.")
-                return
-            # basic import compatibility
+                messagebox.showerror("Open Error", "Not a valid IKP file."); return
             self.model = {k:v for k,v in data.items() if k != "meta"}
-            # ensure start and scenes exist
             if "start" not in self.model:
                 self.model["start"] = next(iter(self.model.get("scenes",{})))
             self.active_scene = self.model.get("start","Main")
@@ -343,11 +287,9 @@ class IKPVisualIDE(tk.Tk):
             messagebox.showerror("Open Error", str(e))
 
     def export_examples(self):
-        # create an examples folder adjacent to current project path if available
         base = self.project_path or os.getcwd()
         exdir = filedialog.askdirectory(initialdir=base, title="Select export directory for examples")
-        if not exdir:
-            return
+        if not exdir: return
         examples = {
             "hello_world.ikp": {
                 "ikp":"0.4","meta":{"title":"Hello"}, "start":"Main",
@@ -375,7 +317,7 @@ class IKPVisualIDE(tk.Tk):
             for name, data in examples.items():
                 p = os.path.join(exdir, name)
                 with open(p, "w", encoding="utf-8") as f:
-                    f.write(yaml.dump(data, sort_keys=False))
+                    f.write(dump_yaml(data))
             messagebox.showinfo("Exported", f"Examples exported to {exdir}")
         except Exception as e:
             messagebox.showerror("Export Error", str(e))
