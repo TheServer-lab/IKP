@@ -89,7 +89,7 @@ def interpolate(text, vars_map):
         return text
     def repl(m):
         key = m.group(1)
-        v = vars_map.get(key)
+        v = (vars_map or {}).get(key)
         val = _extract_var_value(v)
         if val is None:
             return ""
@@ -188,8 +188,18 @@ _LEGACY_PROGRESS_RE = re.compile(r'\s*progress\(\s*([^,]+)\s*,\s*([0-9\.\-]+)\s*
 _LEGACY_GOTO_RE = re.compile(r'\s*goto\(\s*(.+)\s*\)\s*', re.I)
 
 def execute_action(action, context):
+    """
+    action: dict (preferred) or legacy string.
+    context: dict with keys:
+      - show_scene(name)
+      - set_var(name, value)
+      - set_progress(name, value)
+      - get_vars() -> mapping
+      - handle_action(action) optional
+    """
     if not action:
         return
+    # legacy string parsing
     if isinstance(action, str):
         m = _LEGACY_SET_RE.match(action)
         if m:
@@ -215,8 +225,10 @@ def execute_action(action, context):
                 sh(target)
             return
         return
+
     if not isinstance(action, dict):
         return
+
     typ = action.get("type")
     if typ == "goto":
         target = action.get("target")
