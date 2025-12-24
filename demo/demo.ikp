@@ -1,0 +1,126 @@
+ikp: 0.4
+meta:
+  title: IKP Full Feature Demo
+  author: IKP
+  description: Demonstrates all IKP 0.4 UI elements and actions
+start: Intro
+scenes:
+  Intro:
+    ui:
+    - type: label
+      text: Welcome to the IKP 0.4 Full Demo
+    - type: richtext
+      text: This demo showcases **all UI widgets**, variable binding, interpolation,
+        and actions.
+    - type: image
+      src: demo_image.png
+      width: 400
+      height: 200
+    - type: button
+      text: Start Demo
+      action:
+        type: goto
+        target: Inputs
+  Inputs:
+    ui:
+    - type: label
+      text: User Input Widgets
+    - type: input
+      label: Your name
+      var: name
+      default: Ada
+    - type: textarea
+      label: About you
+      var: bio
+      rows: 4
+      default: I like interactive specs.
+    - type: dropdown
+      label: Favorite language
+      var: lang
+      options:
+      - Python
+      - JavaScript
+      - Rust
+      - Go
+      default: Python
+    - type: checkbox
+      label: I agree to continue
+      var: agree
+      default: true
+    - type: colorpicker
+      label: Pick a color
+      var: color
+      default: '#ff0000'
+    - type: button
+      text: Continue
+      action:
+        type: goto
+        target: Controls
+  Controls:
+    ui:
+    - type: label
+      text: Controls & State
+    - type: slider
+      label: Progress value
+      var: slider_value
+      from: 0
+      to: 100
+      default: 25
+    - type: progress
+      var: prog
+      max: 100
+      value: 25
+    - type: button
+      text: Sync Progress
+      action:
+        type: progress
+        target: prog
+        value: ${slider_value}
+    - type: button
+      text: Conditional Branch
+      action:
+        type: if
+        condition: ${slider_value} > 50
+        then:
+          type: goto
+          target: High
+        else:
+          type: goto
+          target: Low
+  High:
+    ui:
+    - type: label
+      text: High value detected! (${slider_value})
+    - type: button
+      text: Summary
+      action:
+        type: goto
+        target: Summary
+  Low:
+    ui:
+    - type: label
+      text: Low value detected (${slider_value}). Try increasing it.
+    - type: button
+      text: Back
+      action:
+        type: goto
+        target: Controls
+  Summary:
+    ui:
+    - type: label
+      text: Summary
+    - type: label
+      text: 'Name: ${name}'
+    - type: label
+      text: 'Language: ${lang}'
+    - type: label
+      text: 'Agreed: ${agree}'
+    - type: label
+      text: 'Bio: ${bio}'
+    - type: label
+      text: 'Favorite color: ${color}'
+    - type: button
+      text: Restart Demo
+      action:
+        type: goto
+        target: Intro
