@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-IKP Visual IDE v0.3 -> v0.4-patched
+IKP Visual IDE v0.3 -> v0.4-patched (fixed)
 - Generates spec-compliant IKP (ikp: 0.4)
 - Creates structured actions for buttons (goto/set/progress)
 - Resolves images relative to project when selecting
@@ -93,7 +93,7 @@ class SceneCanvas(tk.Canvas):
             # Draw Block
             tag = f"idx_{i}"
             rect = self.create_rectangle(10, y, 240, y+35, fill=col, outline="#333", width=2, tags=("block", tag))
-            txt = self.create_text(20, y+17, anchor="w", text=f"{t.upper()}: {b.get('text', b.get('label', ''))[:15]}", 
+            txt = self.create_text(20, y+17, anchor="w", text=f"{t.upper()}: {b.get('text', b.get('label', ''))[:15]}",
                                    font=("Arial", 9, "bold"), tags=("block", tag))
 
             # Events
@@ -116,7 +116,7 @@ class SceneCanvas(tk.Canvas):
 
     def start_drag(self, event, idx):
         self.dragging_idx = idx
-        self.ghost = self.create_rectangle(event.x-115, event.y-17, event.x+115, event.y+17, 
+        self.ghost = self.create_rectangle(event.x-115, event.y-17, event.x+115, event.y+17,
                                           fill="white", stipple="gray50", outline="blue", dash=(2,2))
 
     def do_drag(self, event):
@@ -351,10 +351,11 @@ class IKPVisualIDE(tk.Tk):
         examples = {
             "hello_world.ikp": {
                 "ikp":"0.4","meta":{"title":"Hello"}, "start":"Main",
-                "scenes":{"Main":{"ui":[
-                    {"type":"label","text":"Welcome to IKP v0.4"},
-                    {"type":"input","label":"Your name","var":"name"},
-                    {"type":"button","text":"Say hello","action":{"type":"goto","target":"Hello"}]},
+                "scenes":{
+                    "Main":{"ui":[
+                        {"type":"label","text":"Welcome to IKP v0.4"},
+                        {"type":"input","label":"Your name","var":"name"},
+                        {"type":"button","text":"Say hello","action":{"type":"goto","target":"Hello"}}
                     ]},
                     "Hello":{"ui":[{"type":"label","text":"Hello ${name}!"}]}
                 }
