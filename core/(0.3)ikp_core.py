@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
-ikp_core.py — shared utilities for IKP tools
+ikp_core.py — shared utilities for IKP tools (fixed AST compatibility)
 
 Provides:
 - load_yaml_text / dump_yaml
 - validate_ikp
-- interpolate (supports objects with .get or callables)
+- interpolate
 - resolve_path (image resolution)
 - safe_eval (AST-based evaluator for simple numeric & comparison expressions)
-- execute_action(action, context) - structured action runner (goto, set, progress, if)
+- execute_action(action, context)
 """
 
 import yaml, re, os, ast
@@ -62,34 +62,21 @@ def validate_ikp(data):
 _VAR_PATTERN = re.compile(r"\$\{([a-zA-Z0-9_]+)\}")
 
 def _extract_var_value(v):
-    """
-    Accepts many possible representations for a variable:
-    - tk.Variable (has .get())
-    - tk.Text (has .get("1.0","end-1c"))
-    - callables (call())
-    - raw values
-    We try common patterns and fall back to str(v) or empty string.
-    """
     try:
-        # If it's a callable, call it (but avoid calling tkinter.Text without args)
         if callable(v):
             try:
                 return v()
             except TypeError:
-                # maybe tkinter.Text which requires args for get; fallthrough
                 pass
-        # If has get() with no required args (tk.Variable)
         get = getattr(v, "get", None)
         if callable(get):
             try:
                 return get()
             except TypeError:
-                # Maybe tkinter.Text.get requires args
                 try:
                     return v.get("1.0", "end-1c")
                 except Exception:
                     pass
-        # fallback
         return v
     except Exception:
         try:
@@ -124,13 +111,26 @@ def resolve_path(src, base_path):
 # Supports numbers, booleans, comparisons, arithmetic, and simple boolean ops.
 # Variables (names) are looked up in vars_map.
 # -------------------------
-_ALLOWED_NODES = (
-    ast.Expression, ast.BinOp, ast.UnaryOp, ast.Num, ast.Constant, ast.Name,
+# Build allowed node classes dynamically for compatibility across Python versions
+_allowed_node_classes = {
+    ast.Expression, ast.BinOp, ast.UnaryOp, ast.Constant, ast.Name,
     ast.Load, ast.Add, ast.Sub, ast.Mult, ast.Div, ast.Mod, ast.Pow,
     ast.Compare, ast.Eq, ast.NotEq, ast.Lt, ast.LtE, ast.Gt, ast.GtE,
     ast.BoolOp, ast.And, ast.Or, ast.UnaryOp, ast.Not, ast.USub, ast.UAdd,
     ast.List, ast.Tuple
-)
+}
+
+# older Python versions have ast.Num / ast.Str nodes; include them if present
+if hasattr(ast, "Num"):
+    _allowed_node_classes.add(ast.Num)
+if hasattr(ast, "Str"):
+    _allowed_node_classes.add(ast.Str)
+if hasattr(ast, "Bytes"):
+    _allowed_node_classes.add(ast.Bytes)
+if hasattr(ast, "NameConstant"):
+    _allowed_node_classes.add(ast.NameConstant)
+
+_ALLOWED_NODES = tuple(_allowed_node_classes)
 
 def _check_node(node):
     if not isinstance(node, _ALLOWED_NODES):
@@ -139,33 +139,18 @@ def _check_node(node):
         _check_node(child)
 
 def safe_eval(expr, vars_map):
-    """
-    Evaluate a simple expression safely.
-    - expr: string expression like "10 > 5" or "${x} > 3" (interpolation should be applied first)
-    - vars_map: dict of variable values (strings/numbers/bools)
-    Returns boolean/int/float as appropriate.
-    """
     if not isinstance(expr, str):
         raise ValueError("Expression must be a string")
-    # quick empty guard
     expr = expr.strip()
     if expr == "":
         return False
-
-    # parse AST
     try:
         node = ast.parse(expr, mode='eval')
     except Exception as e:
         raise ValueError(f"Parse error: {e}")
-
-    # validate nodes
     _check_node(node)
-
-    # compile and eval with controlled globals/locals
-    # Build local mapping: convert var names into safe python literals
     safe_locals = {}
     for k, v in (vars_map or {}).items():
-        # if callable or object, try to extract primitive
         try:
             if callable(v):
                 val = v()
@@ -173,28 +158,22 @@ def safe_eval(expr, vars_map):
                 val = v
         except Exception:
             val = v
-        # coerce Tkinter vars which may be string-like
         try:
-            # convert 'true'/'false' to booleans
             if isinstance(val, str):
                 low = val.strip().lower()
                 if low in ("true", "false"):
                     safe_locals[k] = low == "true"
                     continue
-                # numeric?
                 try:
                     if '.' in val:
-                        safe_locals[k] = float(val)
-                        continue
+                        safe_locals[k] = float(val); continue
                     else:
-                        safe_locals[k] = int(val)
-                        continue
+                        safe_locals[k] = int(val); continue
                 except Exception:
                     pass
             safe_locals[k] = val
         except Exception:
             safe_locals[k] = val
-
     try:
         code = compile(node, "<safe_eval>", "eval")
         return eval(code, {"__builtins__": None}, safe_locals)
@@ -209,20 +188,8 @@ _LEGACY_PROGRESS_RE = re.compile(r'\s*progress\(\s*([^,]+)\s*,\s*([0-9\.\-]+)\s*
 _LEGACY_GOTO_RE = re.compile(r'\s*goto\(\s*(.+)\s*\)\s*', re.I)
 
 def execute_action(action, context):
-    """
-    Execute an action.
-    - action: dict (preferred) or legacy string.
-    - context: dict of callables:
-        - 'show_scene'(name)
-        - 'set_var'(name, value)
-        - 'set_progress'(name, value)
-        - 'get_vars'() -> mapping of current variables (for safe_eval/interpolation)
-    The function may call context['show_scene'] or context['set_var'] etc.
-    """
     if not action:
         return
-
-    # Legacy string handling
     if isinstance(action, str):
         m = _LEGACY_SET_RE.match(action)
         if m:
@@ -248,10 +215,8 @@ def execute_action(action, context):
                 sh(target)
             return
         return
-
     if not isinstance(action, dict):
         return
-
     typ = action.get("type")
     if typ == "goto":
         target = action.get("target")
@@ -261,13 +226,10 @@ def execute_action(action, context):
         var = action.get("var")
         val = action.get("value")
         if isinstance(val, str):
-            # allow interpolation via provided get_vars
             get_vars = context.get("get_vars")
             if get_vars:
-                from re import sub
-                vars_map = get_vars()
                 try:
-                    val = interpolate(val, vars_map)
+                    val = interpolate(val, get_vars())
                 except Exception:
                     pass
         setter = context.get("set_var")
@@ -293,7 +255,6 @@ def execute_action(action, context):
         cond = action.get("condition", "")
         get_vars = context.get("get_vars", lambda: {})
         vars_map = get_vars()
-        # interpolate first
         try:
             cond_interp = interpolate(cond, vars_map)
         except Exception:
@@ -309,7 +270,6 @@ def execute_action(action, context):
             for a in branch:
                 execute_action(a, context)
     else:
-        # unknown action types: ignore or permit context to handle
         handler = context.get("handle_action")
         if callable(handler):
             handler(action)
