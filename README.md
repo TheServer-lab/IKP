@@ -226,7 +226,7 @@ Renderers should gracefully ignore unknown fields and widget types.
 ## License
 
 Open and extensible by design.
-(The Server-Lab Open Control License.)
+(Server-lab Open-Control License)
 
 ---
 
